@@ -1,18 +1,31 @@
 const HEARTMED_API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:18080';
 
+// ⚠️ CONFIRMA ESTAS RUTAS CON TU BACKEND (C++). Son las únicas que hay que cambiar
+// si los endpoints se llaman distinto.
+export const ENDPOINTS = {
+  pacientes: '/api/pacientes',
+  inventario: '/api/inventario',
+};
+
 function buildApiUrl(path) {
   return `${HEARTMED_API_BASE_URL.replace(/\/$/, '')}${path}`;
 }
 
+function authHeaders() {
+  const token = localStorage.getItem('token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function requestJson(url, options = {}) {
+  // Los headers se mezclan (antes, pasar options.headers reemplazaba Content-Type/Accept)
   const response = await fetch(url, {
     mode: 'cors',
+    ...options,
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       ...(options.headers || {}),
     },
-    ...options,
   });
 
   const rawText = await response.text();
@@ -54,4 +67,14 @@ export async function loginUser(credentials) {
     method: 'POST',
     body: JSON.stringify(credentials),
   });
+}
+
+// ---- Dashboard ----
+
+export async function getPatients() {
+  return requestJson(buildApiUrl(ENDPOINTS.pacientes), { headers: authHeaders() });
+}
+
+export async function getInventory() {
+  return requestJson(buildApiUrl(ENDPOINTS.inventario), { headers: authHeaders() });
 }
