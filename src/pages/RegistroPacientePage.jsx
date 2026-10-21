@@ -1,81 +1,108 @@
 // src/pages/RegistroPacientePage.jsx
-// Pantalla "Admitir nuevo paciente" (solo front, sin backend por ahora).
+// Pantalla "Admitir nuevo paciente", conectada a la API en C++.
 //
 // El formulario se coloca justo debajo de las cabeceras dibujadas en la imagen
 // (EXPEDIENTE / AFILIACIÓN / SANGRE / RECOMPENSA / ESTADO / ACCIONES), así cada
-// campo queda alineado con su columna. Debajo se listan los pacientes guardados
-// en este equipo, con buscador y paginación.
-import { useMemo, useRef, useState } from 'react';
+// campo queda alineado con su columna. Debajo se listan los pacientes que
+// devuelve GET /api/pacientes, con buscador y paginación.
+//
+// Los nombres del formulario son los de la pantalla; al guardar se traducen a
+// los de la base (ver aPayload). La columna dibujada "AFILIACIÓN" se tapa y se
+// reetiqueta como "Rango / cargo", que es lo que la tabla guarda de verdad.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import PacientesGrandLine, { Zona } from './PacientesGrandLine';
-import {
-  actualizarPaciente,
-  eliminarPacienteLocal,
-  listarPacientesLocales,
-  registrarPaciente,
-} from '../services/patientsLocal';
+import { createPatient, getPatients, updatePatient } from '../services/api';
+import { notifyPatientsChanged } from '../services/patientEvents';
 
 // Ruta del dashboard (a donde vuelve el botón "Atrás")
 const RUTA_DASHBOARD = '/dashboard';
 
 // Color del panel de la imagen, usado para tapar textos dibujados que cambian
-// (subtítulo y contador). Si se nota una costura, ajusta este valor.
+// (subtítulo, cabecera de la columna de rango y contador).
+// Si se nota una costura, ajusta este valor.
 const FONDO_PANEL = '#222838';
 const PAGE_SIZE = 5;
 
-const AFILIACIONES = [
-  { value: 'pirata', label: 'Pirata' },
-  { value: 'marina', label: 'Marina' },
-  { value: 'revolucionario', label: 'Revolucionario' },
-  { value: 'civil', label: 'Civil' },
-];
-
 const SANGRES = ['F', 'S', 'X', 'XF'];
 
+// Los cuatro valores que acepta el CHECK de la tabla pacientes. No inventar
+// otros: la base rechaza cualquier cosa fuera de esta lista.
 const ESTADOS = [
-  { value: 'critico', label: 'Crítico', color: '#ff6b5b' },
-  { value: 'recuperacion', label: 'En recuperación', color: '#ffa733' },
-  { value: 'estable', label: 'Estable', color: '#4dff88' },
-  { value: 'tratando', label: 'Tratando', color: '#4aa8ff' },
-  { value: 'inspeccion', label: 'Inspección', color: '#ffe14d' },
+  { value: 'CRITICO', label: 'Crítico', color: '#ff6b5b' },
+  { value: 'EN_RECUPERACION', label: 'En recuperación', color: '#ffa733' },
+  { value: 'EN_TRATAMIENTO', label: 'En tratamiento', color: '#4aa8ff' },
+  { value: 'SANO', label: 'Sano', color: '#4dff88' },
 ];
 
 const FORM_VACIO = {
-  alias: '',
-  afiliacion: '',
+  nombre: '',
+  rango: '',
   sangre: '',
   recompensa: '',
   estado: '',
-  tripulacion: '',
+  documento: '',
+  nacimiento: '',
   notas: '',
 };
 
 const ERRORES_VACIOS = Object.fromEntries(Object.keys(FORM_VACIO).map((k) => [k, '']));
 
-const etiquetaDe = (lista, value) => lista.find((i) => i.value === value)?.label ?? value;
 const estadoDe = (value) => ESTADOS.find((e) => e.value === value);
 
-const formatBerries = (digitos) => (digitos ? Number(digitos).toLocaleString('es-CO') : '');
+// Ojo con el cero: una recompensa de 0 es un dato válido y hay que mostrarla,
+// así que no vale con comprobar si el valor es "falsy".
+const formatBerries = (digitos) => {
+  if (digitos === '' || digitos === null || digitos === undefined) return '';
+  return Number(digitos).toLocaleString('es-CO');
+};
 
 // Devuelve un mensaje por campo ('' = sin error)
 function validar(form) {
   const errores = { ...ERRORES_VACIOS };
 
-  if (form.alias.trim().length < 2) errores.alias = 'Mínimo 2 caracteres.';
-  if (!form.afiliacion) errores.afiliacion = 'Elige una.';
+  if (form.nombre.trim().length < 2) errores.nombre = 'Mínimo 2 caracteres.';
+  if (!form.rango.trim()) errores.rango = 'Indica el rango o cargo.';
   if (!form.sangre) errores.sangre = 'Elige tipo.';
-  if (!form.recompensa) errores.recompensa = 'Ingresa un monto (0 si no tiene).';
+  if (form.recompensa === '') errores.recompensa = 'Ingresa un monto (0 si no tiene).';
   if (!form.estado) errores.estado = 'Elige estado.';
-  if (form.afiliacion !== 'civil' && !form.tripulacion.trim()) {
-    errores.tripulacion = 'Indica la tripulación (o elige Civil).';
-  }
-  if (form.notas.length > 200) errores.notas = 'Máximo 200 caracteres.';
+  if (!form.documento.trim()) errores.documento = 'Obligatorio y único (ej. HP-005).';
+  if (!form.nacimiento) errores.nacimiento = 'Indica la fecha.';
+  if (form.notas.length > 500) errores.notas = 'Máximo 500 caracteres.';
 
   return errores;
 }
 
 const hayErrores = (errores) => Object.values(errores).some(Boolean);
+
+// Del formulario a los nombres que espera la API / la base
+function aPayload(form) {
+  return {
+    documento_identidad: form.documento.trim(),
+    nombre_completo: form.nombre.trim(),
+    fecha_nacimiento: form.nacimiento,
+    tipo_sangre: form.sangre,
+    rango_cargo: form.rango.trim(),
+    recompensa: Number(form.recompensa || 0),
+    estado_salud: form.estado,
+    observaciones: form.notas.trim(),
+  };
+}
+
+// De la respuesta de la API al formulario (para editar)
+function aFormulario(paciente) {
+  return {
+    nombre: paciente.nombre_completo ?? '',
+    rango: paciente.rango_cargo ?? '',
+    sangre: paciente.tipo_sangre ?? '',
+    recompensa: String(paciente.recompensa ?? ''),
+    estado: paciente.estado_salud ?? '',
+    documento: paciente.documento_identidad ?? '',
+    nacimiento: paciente.fecha_nacimiento ?? '',
+    notas: paciente.observaciones ?? '',
+  };
+}
 
 // ---- estilos ----
 const claseInput =
@@ -122,22 +149,43 @@ function Selector({ x, y, w, h, className, children, ...props }) {
 export default function RegistroPacientePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const aliasRef = useRef(null);
+  const nombreRef = useRef(null);
 
   const [form, setForm] = useState(FORM_VACIO);
   const [errores, setErrores] = useState(ERRORES_VACIOS);
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState(null); // { tipo: 'ok' | 'error', texto }
-  const [pacientes, setPacientes] = useState(listarPacientesLocales);
+  const [pacientes, setPacientes] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [errorCarga, setErrorCarga] = useState('');
   const [busqueda, setBusqueda] = useState('');
   const [pagina, setPagina] = useState(1);
-  const [editandoId, setEditandoId] = useState(null); // id del paciente en edición (null = alta nueva)
+  const [editandoId, setEditandoId] = useState(null); // id_paciente en edición (null = alta nueva)
+
+  const cargar = useCallback(async () => {
+    setCargando(true);
+    try {
+      const respuesta = await getPatients();
+      const lista = Array.isArray(respuesta) ? respuesta : respuesta?.pacientes ?? [];
+      setPacientes(lista);
+      setErrorCarga('');
+    } catch (error) {
+      setPacientes([]);
+      setErrorCarga(error.message || 'No se pudo cargar la lista de pacientes.');
+    } finally {
+      setCargando(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    cargar();
+  }, [cargar]);
 
   const filtrados = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     if (!q) return pacientes;
     return pacientes.filter((p) =>
-      [p.alias, p.tripulacion, p.recompensa, etiquetaDe(AFILIACIONES, p.afiliacion)]
+      [p.nombre_completo, p.documento_identidad, p.rango_cargo, p.recompensa]
         .join(' ')
         .toLowerCase()
         .includes(q),
@@ -170,7 +218,7 @@ export default function RegistroPacientePage() {
     setForm(FORM_VACIO);
     setErrores(ERRORES_VACIOS);
     setMensaje(null);
-    aliasRef.current?.focus();
+    nombreRef.current?.focus();
   };
 
   const handleSubmit = async (event) => {
@@ -183,33 +231,27 @@ export default function RegistroPacientePage() {
 
     setGuardando(true);
     try {
-      // 🔌 Cuando haya backend: reemplazar por createPatient(...) y llamar
-      //    a notifyPatientsChanged() (ver services/patientsLocal.js)
-      const datos = {
-        alias: form.alias.trim(),
-        afiliacion: form.afiliacion,
-        sangre: form.sangre,
-        recompensa: form.recompensa,
-        estado: form.estado,
-        tripulacion: form.tripulacion.trim(),
-        notas: form.notas.trim(),
-      };
+      const datos = aPayload(form);
 
       if (editandoId) {
-        // 🔌 Cuando haya backend: updatePatient(editandoId, datos)
-        const actualizado = await actualizarPaciente(editandoId, datos);
-        setMensaje({ tipo: 'ok', texto: `✔ ${actualizado.alias} actualizado` });
+        const respuesta = await updatePatient(editandoId, datos);
+        const nombre = respuesta?.paciente?.nombre_completo ?? datos.nombre_completo;
+        setMensaje({ tipo: 'ok', texto: `✔ ${nombre} actualizado` });
       } else {
-        const creado = await registrarPaciente(datos);
+        const respuesta = await createPatient(datos);
+        const nombre = respuesta?.paciente?.nombre_completo ?? datos.nombre_completo;
         setPagina(1);
         setBusqueda('');
-        setMensaje({ tipo: 'ok', texto: `✔ ${creado.alias} admitido (guardado en este equipo)` });
+        setMensaje({ tipo: 'ok', texto: `✔ ${nombre} admitido` });
       }
 
-      setPacientes(listarPacientesLocales());
+      // El dashboard escucha este aviso y actualiza sus contadores al instante
+      notifyPatientsChanged();
+      await cargar();
+
       setEditandoId(null);
       setForm(FORM_VACIO);
-      aliasRef.current?.focus();
+      nombreRef.current?.focus();
     } catch (err) {
       setMensaje({ tipo: 'error', texto: err.message || 'No se pudo registrar al paciente.' });
     } finally {
@@ -219,25 +261,11 @@ export default function RegistroPacientePage() {
 
   // Carga el paciente en el formulario para modificarlo
   const handleEditar = (p) => {
-    setForm({
-      alias: p.alias,
-      afiliacion: p.afiliacion,
-      sangre: p.sangre,
-      recompensa: p.recompensa,
-      estado: p.estado,
-      tripulacion: p.tripulacion || '',
-      notas: p.notas || '',
-    });
+    setForm(aFormulario(p));
     setErrores(ERRORES_VACIOS);
     setMensaje(null);
-    setEditandoId(p.id);
-    aliasRef.current?.focus();
-  };
-
-  const handleEliminar = (id) => {
-    if (editandoId === id) limpiar();
-    eliminarPacienteLocal(id);
-    setPacientes(listarPacientesLocales());
+    setEditandoId(p.id_paciente);
+    nombreRef.current?.focus();
   };
 
   const campo = (name) => claseInput + (errores[name] ? claseInvalido : '');
@@ -310,44 +338,49 @@ export default function RegistroPacientePage() {
               setBusqueda(e.target.value);
               setPagina(1);
             }}
-            placeholder="Buscar alias, tripulación…"
-            aria-label="Buscar pacientes guardados"
+            placeholder="Buscar nombre, documento…"
+            aria-label="Buscar pacientes registrados"
             className="h-full w-full rounded-md border-0 bg-[#2d1b0e] px-[3%] text-[1.05em] text-[#fbe9c0] placeholder-[#a58a5a] outline-none focus:ring-2 focus:ring-[#ffd36a]"
           />
+        </Zona>
+
+        {/* ── La imagen dibuja "AFILIACIÓN" sobre esta columna, pero lo que se
+               guarda es el rango o cargo. Se tapa la cabecera y se reetiqueta. ── */}
+        <Zona x={550} y={392} w={205} h={70} className="flex items-center justify-center">
+          <div className="absolute inset-0" style={{ background: FONDO_PANEL }} aria-hidden="true" />
+          <span className="relative z-10 rounded-full border border-[#b07a3a]/70 bg-[#2d1b0e] px-[6%] py-[2%] text-[0.95em] font-bold uppercase tracking-wider text-[#f2c48a]">
+            Rango
+          </span>
         </Zona>
 
         {/* ── Fila 1: campos bajo cada cabecera de columna ── */}
         <Zona x={185} y={480} w={355} h={54}>
           <input
-            ref={aliasRef}
-            className={campo('alias')}
-            name="alias"
-            placeholder="Alias del paciente"
-            aria-label="Alias del paciente"
-            aria-invalid={Boolean(errores.alias)}
-            maxLength={60}
+            ref={nombreRef}
+            className={campo('nombre')}
+            name="nombre"
+            placeholder="Nombre completo"
+            aria-label="Nombre completo del paciente"
+            aria-invalid={Boolean(errores.nombre)}
+            maxLength={150}
             autoComplete="off"
-            value={form.alias}
+            value={form.nombre}
             onChange={handleChange}
           />
         </Zona>
-        <Selector
-          x={550}
-          y={480}
-          w={205}
-          h={54}
-          className={campo('afiliacion')}
-          name="afiliacion"
-          aria-label="Afiliación"
-          aria-invalid={Boolean(errores.afiliacion)}
-          value={form.afiliacion}
-          onChange={handleChange}
-        >
-          <option value="">Elegir</option>
-          {AFILIACIONES.map((a) => (
-            <option key={a.value} value={a.value}>{a.label}</option>
-          ))}
-        </Selector>
+        <Zona x={550} y={480} w={205} h={54}>
+          <input
+            className={campo('rango')}
+            name="rango"
+            placeholder="Ej. Capitán"
+            aria-label="Rango o cargo"
+            aria-invalid={Boolean(errores.rango)}
+            maxLength={50}
+            autoComplete="off"
+            value={form.rango}
+            onChange={handleChange}
+          />
+        </Zona>
         <Selector
           x={765}
           y={480}
@@ -385,7 +418,7 @@ export default function RegistroPacientePage() {
           h={54}
           className={campo('estado')}
           name="estado"
-          aria-label="Estado"
+          aria-label="Estado de salud"
           aria-invalid={Boolean(errores.estado)}
           value={form.estado}
           onChange={handleChange}
@@ -405,103 +438,120 @@ export default function RegistroPacientePage() {
           </button>
         </Zona>
 
-        <Err x={185} y={536} w={355}>{errores.alias}</Err>
-        <Err x={550} y={536} w={205}>{errores.afiliacion}</Err>
+        <Err x={185} y={536} w={355}>{errores.nombre}</Err>
+        <Err x={550} y={536} w={205}>{errores.rango}</Err>
         <Err x={765} y={536} w={150}>{errores.sangre}</Err>
         <Err x={927} y={536} w={263}>{errores.recompensa}</Err>
         <Err x={1200} y={536} w={175}>{errores.estado}</Err>
 
-        {/* ── Fila 2: tripulación y notas ── */}
-        <Etiqueta x={185} y={566} w={355}>Tripulación</Etiqueta>
-        <Etiqueta x={550} y={566} w={1087}>Notas clínicas (opcional)</Etiqueta>
+        {/* ── Fila 2: los campos que la tabla exige y no caben arriba ── */}
+        <Etiqueta x={185} y={566} w={355}>Documento</Etiqueta>
+        <Etiqueta x={550} y={566} w={365}>Fecha de nacimiento</Etiqueta>
+        <Etiqueta x={927} y={566} w={710}>Notas clínicas (opcional)</Etiqueta>
 
         <Zona x={185} y={598} w={355} h={54}>
           <input
-            className={campo('tripulacion')}
-            name="tripulacion"
-            placeholder="Ej. Sombrero de Paja"
-            aria-label="Tripulación"
-            aria-invalid={Boolean(errores.tripulacion)}
-            maxLength={60}
+            className={campo('documento')}
+            name="documento"
+            placeholder="Ej. HP-005"
+            aria-label="Documento de identidad"
+            aria-invalid={Boolean(errores.documento)}
+            maxLength={50}
             autoComplete="off"
-            value={form.tripulacion}
+            value={form.documento}
             onChange={handleChange}
           />
         </Zona>
-        <Zona x={550} y={598} w={1087} h={54}>
+        <Zona x={550} y={598} w={365} h={54}>
+          <input
+            type="date"
+            className={campo('nacimiento')}
+            name="nacimiento"
+            aria-label="Fecha de nacimiento"
+            aria-invalid={Boolean(errores.nacimiento)}
+            value={form.nacimiento}
+            onChange={handleChange}
+          />
+        </Zona>
+        <Zona x={927} y={598} w={710} h={54}>
           <input
             className={campo('notas')}
             name="notas"
             placeholder="Heridas, alergias, observaciones…"
             aria-label="Notas clínicas"
             aria-invalid={Boolean(errores.notas)}
-            maxLength={200}
+            maxLength={500}
             autoComplete="off"
             value={form.notas}
             onChange={handleChange}
           />
         </Zona>
 
-        <Err x={185} y={654} w={355}>{errores.tripulacion}</Err>
-        <Err x={550} y={654} w={1087}>{errores.notas}</Err>
+        <Err x={185} y={654} w={355}>{errores.documento}</Err>
+        <Err x={550} y={654} w={365}>{errores.nacimiento}</Err>
+        <Err x={927} y={654} w={710}>{errores.notas}</Err>
       </form>
 
-      {/* ── Lista de pacientes guardados (mismas columnas que las cabeceras) ── */}
+      {/* ── Lista de pacientes (mismas columnas que las cabeceras) ── */}
       <Zona x={185} y={692} w={1452} h={500}>
-        {visibles.length === 0 ? (
-          <p className="flex h-full items-center justify-center text-[1.3em] text-[#a58a5a]">
-            {pacientes.length === 0
-              ? 'Aún no hay pacientes registrados en este equipo.'
-              : 'Ningún paciente coincide con la búsqueda.'}
+        {cargando || errorCarga || visibles.length === 0 ? (
+          <p
+            className={`flex h-full items-center justify-center text-[1.3em] ${
+              errorCarga ? 'text-red-300' : 'text-[#a58a5a]'
+            }`}
+            role={errorCarga ? 'alert' : 'status'}
+          >
+            {cargando
+              ? 'Cargando pacientes…'
+              : errorCarga
+                ? errorCarga
+                : pacientes.length === 0
+                  ? 'Aún no hay pacientes registrados.'
+                  : 'Ningún paciente coincide con la búsqueda.'}
           </p>
         ) : (
           <ul className="flex flex-col gap-[0.5em]">
             {visibles.map((p) => {
-              const estado = estadoDe(p.estado);
+              const estado = estadoDe(p.estado_salud);
               return (
                 <li
-                  key={p.id}
+                  key={p.id_paciente}
                   className={`grid h-[3.1em] items-center rounded-lg border px-[0.8em] ${
-                    p.id === editandoId
+                    p.id_paciente === editandoId
                       ? 'border-[#ffd36a] bg-[#2a2314]/90'
                       : 'border-[#b07a3a]/40 bg-[#141a26]/85'
                   }`}
                   style={{ gridTemplateColumns: '355fr 205fr 150fr 263fr 175fr 252fr', columnGap: '0.5em' }}
                 >
                   <div className="min-w-0">
-                    <p className="truncate text-[1.3em] font-bold uppercase leading-tight text-[#f2c48a]">{p.alias}</p>
+                    <p className="truncate text-[1.3em] font-bold uppercase leading-tight text-[#f2c48a]">
+                      {p.nombre_completo}
+                    </p>
                     <p className="truncate text-[0.85em] uppercase leading-tight text-[#a58a5a]">
-                      {p.tripulacion || 'Sin tripulación'}
+                      {p.documento_identidad}
                     </p>
                   </div>
-                  <span className="truncate text-[1.15em] text-[#fbe9c0]">{etiquetaDe(AFILIACIONES, p.afiliacion)}</span>
-                  <span className="text-[1.15em] text-[#fbe9c0]">Type {p.sangre}</span>
+                  <span className="truncate text-[1.15em] text-[#fbe9c0]">{p.rango_cargo}</span>
+                  <span className="text-[1.15em] text-[#fbe9c0]">Type {p.tipo_sangre}</span>
                   <span className="truncate text-[1.15em] tabular-nums text-[#fbe9c0]">฿ {formatBerries(p.recompensa)}</span>
                   {/* El badge puede ocupar parte de la columna de acciones (no se parte en dos líneas) */}
                   <span
                     className="justify-self-start whitespace-nowrap rounded-full border px-[0.6em] py-[0.1em] text-[0.85em] font-bold uppercase"
                     style={{ color: estado?.color, borderColor: estado?.color, boxShadow: `0 0 0.6em ${estado?.color}55` }}
                   >
-                    {estado?.label ?? p.estado}
+                    {estado?.label ?? p.estado_salud}
                   </span>
+                  {/* Sin botón de eliminar: el esquema no permite borrar pacientes
+                      (historias_clinicas tiene ON DELETE RESTRICT). */}
                   <div className="flex justify-self-end gap-[0.4em]">
                     <button
                       type="button"
                       onClick={() => handleEditar(p)}
-                      aria-label={`Editar ${p.alias}`}
+                      aria-label={`Editar ${p.nombre_completo}`}
                       title="Editar"
                       className="rounded-md border border-[#b07a3a]/50 bg-[#2a2314] px-[0.6em] py-[0.25em] text-[1.05em] transition hover:bg-[#40341a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffd36a]"
                     >
                       ✏️
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleEliminar(p.id)}
-                      aria-label={`Eliminar ${p.alias}`}
-                      title="Eliminar"
-                      className="rounded-md border border-[#b07a3a]/50 bg-[#3a1d12] px-[0.6em] py-[0.25em] text-[1.05em] transition hover:bg-[#5a2a18] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffd36a]"
-                    >
-                      🗑
                     </button>
                   </div>
                 </li>

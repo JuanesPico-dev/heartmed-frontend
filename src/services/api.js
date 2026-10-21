@@ -75,6 +75,27 @@ export async function getPatients() {
   return requestJson(buildApiUrl(ENDPOINTS.pacientes), { headers: authHeaders() });
 }
 
+// ---- Pacientes ----
+
+// `datos` usa los nombres de la base: documento_identidad, nombre_completo,
+// fecha_nacimiento, tipo_sangre, rango_cargo, recompensa, estado_salud y
+// observaciones (que el backend guarda en la historia clínica).
+export async function createPatient(datos) {
+  return requestJson(buildApiUrl(ENDPOINTS.pacientes), {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(datos),
+  });
+}
+
+export async function updatePatient(idPaciente, datos) {
+  return requestJson(buildApiUrl(`${ENDPOINTS.pacientes}/${idPaciente}`), {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify(datos),
+  });
+}
+
 export async function getInventory() {
   return requestJson(buildApiUrl(ENDPOINTS.inventario), { headers: authHeaders() });
 }
