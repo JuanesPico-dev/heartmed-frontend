@@ -1,14 +1,27 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Button from '../components/Button';
 import { useAuth } from '../context/AuthContext';
 import { checkApiHealth, checkServerHealth, loginUser } from '../services/api';
+import LoginGrandLine, { Zona, estilos } from './LoginGrandLine';
 
-const STATUS_STYLES = {
-  checking: 'border-amber-400/40 bg-amber-500/10 text-amber-200',
-  online: 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200',
-  offline: 'border-red-400/40 bg-red-500/10 text-red-200',
-};
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Devuelve un mensaje por campo ('' = sin error)
+function validar({ email, password }) {
+  const errores = { email: '', password: '' };
+
+  if (!email.trim()) {
+    errores.email = 'Ingresa tu correo.';
+  } else if (!EMAIL_REGEX.test(email.trim())) {
+    errores.email = 'El correo no tiene un formato válido.';
+  }
+
+  if (!password.trim()) {
+    errores.password = 'Ingresa tu contraseña.';
+  }
+
+  return errores;
+}
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -17,12 +30,16 @@ export default function LoginPage() {
     email: '',
     password: '',
   });
+  // Decorativo: el backend todavía no recibe la división médica
+  const [division, setDivision] = useState('');
   const [apiStatus, setApiStatus] = useState({
     state: 'checking',
     message: 'Verificando servicio HeartMed...',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({ email: '', password: '' });
+  const [loginFailed, setLoginFailed] = useState(false); // el backend rechazó las credenciales
 
   useEffect(() => {
     let mounted = true;
@@ -53,7 +70,7 @@ export default function LoginPage() {
           if (mounted) {
             setApiStatus({
               state: 'offline',
-              message: 'No se pudo conectar a HeartMed. Revisa CORS o que el backend esté levantado en http://localhost:18080',
+              message: 'Sin conexión con HeartMed. Revisa que el backend esté activo (puerto 18080) y el CORS.',
             });
           }
         }
@@ -70,19 +87,22 @@ export default function LoginPage() {
   const handleChange = (event) => {
     const { name, value } = event.target;
     setForm((prev) => ({ ...prev, [name]: value }));
+    setFieldErrors((prev) => ({ ...prev, [name]: '' }));
+    setLoginFailed(false);
+    setError('');
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
+    setLoginFailed(false);
 
-    if (!form.email.trim() || !form.password.trim()) {
-      setError('Debes introducir tu email y contraseña para continuar.');
-      return;
-    }
+    const errores = validar(form);
+    setFieldErrors(errores);
+    if (errores.email || errores.password) return;
 
     if (apiStatus.state !== 'online') {
-      setError('La API de HeartMed no está disponible. Revisa que el backend esté levantado en http://localhost:18080 y que permita CORS.');
+      setError('La API de HeartMed no está disponible. Revisa que el backend esté levantado.');
       return;
     }
 
@@ -95,7 +115,8 @@ export default function LoginPage() {
       });
 
       if (!response?.success) {
-        throw new Error(response?.message || 'No se pudo iniciar sesión.');
+        setLoginFailed(true);
+        throw new Error(response?.message || 'Correo o contraseña incorrectos.');
       }
 
       const userData = {
@@ -117,68 +138,99 @@ export default function LoginPage() {
     }
   };
 
+  // Un solo mensaje bajo el botón: error de login o API caída
+  const mensaje = error || (apiStatus.state === 'offline' ? apiStatus.message : '');
+
   return (
-    <main className="anime-shell flex min-h-screen items-center justify-center px-4 py-10">
-      <div className="anime-panel card-surface w-full max-w-md overflow-hidden p-0">
-        <div className="anime-topbar border-b border-amber-400/30 px-6 py-5">
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-[10px] font-black uppercase tracking-[0.55em] text-amber-300">Heart Pirates</span>
-            <span className="rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-1 text-[8px] font-bold uppercase tracking-[0.3em] text-amber-200">
-              Crew 01
-            </span>
-          </div>
-          <h1 className="heart-pirates-heading text-4xl font-black text-white">HeartMed</h1>
-        </div>
-
-        <div className="p-6">
-          <div className="mb-5 rounded-2xl border border-amber-400/25 bg-slate-950/60 px-3 py-2 text-sm shadow-[inset_0_0_18px_rgba(245,199,107,0.08)]">
-            <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-[0.22em] ${apiStatus.state === 'online' ? 'bg-emerald-500/20 text-emerald-200' : apiStatus.state === 'offline' ? 'bg-red-500/20 text-red-200' : 'bg-amber-500/20 text-amber-200'}`}>
-              {apiStatus.state === 'online' ? 'Online' : apiStatus.state === 'offline' ? 'Offline' : 'Checking'}
-            </span>
-            <p className={`mt-2 ${STATUS_STYLES[apiStatus.state]}`}>
-              <span className="font-medium">Estado API:</span> {apiStatus.message}
+    <LoginGrandLine>
+      <form onSubmit={handleSubmit} noValidate className="contents">
+        {/* Chief Medical Officer / ID  ->  email */}
+        <Zona x={1188} y={428} w={285} h={34}>
+          <input
+            className={`${estilos.input} ${fieldErrors.email || loginFailed ? 'ring-2 ring-red-400' : ''}`}
+            type="email"
+            name="email"
+            aria-label="Email"
+            aria-invalid={Boolean(fieldErrors.email || loginFailed)}
+            autoComplete="email"
+            value={form.email}
+            onChange={handleChange}
+          />
+        </Zona>
+        {fieldErrors.email && (
+          <Zona x={1188} y={464} w={285} h={18} className="flex items-center">
+            <p className="text-[0.7em] font-semibold leading-tight text-red-300" role="alert">
+              {fieldErrors.email}
             </p>
-          </div>
+          </Zona>
+        )}
 
-          <form className="space-y-4" onSubmit={handleSubmit}>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-200">Email</label>
-              <input
-                type="email"
-                name="email"
-                value={form.email}
-                onChange={handleChange}
-                autoComplete="email"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-white outline-none transition placeholder:text-slate-500 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20"
-                placeholder="nombre@empresa.com"
-              />
-            </div>
+        {/* Security Encryption / Pass  ->  password (w más corto para dejar ver el candado) */}
+        <Zona x={1188} y={510} w={255} h={34}>
+          <input
+            className={`${estilos.input} ${fieldErrors.password || loginFailed ? 'ring-2 ring-red-400' : ''}`}
+            type="password"
+            name="password"
+            aria-label="Contraseña"
+            aria-invalid={Boolean(fieldErrors.password || loginFailed)}
+            autoComplete="current-password"
+            value={form.password}
+            onChange={handleChange}
+          />
+        </Zona>
+        {fieldErrors.password && (
+          <Zona x={1188} y={546} w={285} h={18} className="flex items-center">
+            <p className="text-[0.7em] font-semibold leading-tight text-red-300" role="alert">
+              {fieldErrors.password}
+            </p>
+          </Zona>
+        )}
 
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-200">Contraseña</label>
-              <input
-                type="password"
-                name="password"
-                value={form.password}
-                onChange={handleChange}
-                autoComplete="current-password"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-white outline-none transition placeholder:text-slate-500 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20"
-                placeholder="Tu contraseña"
-              />
-            </div>
+        {/* Medical Division  ->  decorativo por ahora */}
+        <Zona x={1188} y={592} w={285} h={34}>
+          <select
+            className={estilos.select}
+            aria-label="División médica"
+            value={division}
+            onChange={(e) => setDivision(e.target.value)}
+          >
+            <option value="">Select</option>
+            <option value="cardiologia">Cardiología</option>
+            <option value="cirugia">Cirugía</option>
+            <option value="emergencias">Emergencias</option>
+            <option value="pediatria">Pediatría</option>
+          </select>
+          <span className="pointer-events-none absolute right-[3%] top-1/2 -translate-y-1/2 text-[#e0b060]">▾</span>
+        </Zona>
 
-            {error ? (
-              <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                {error}
-              </p>
-            ) : null}
+        {/* Botón invisible sobre el dibujo "ENTER THE MEDICAL BAY" */}
+        <Zona x={1112} y={652} w={378} h={82}>
+          <button
+            type="submit"
+            className={estilos.boton}
+            disabled={isSubmitting || apiStatus.state !== 'online'}
+            aria-label={isSubmitting ? 'Iniciando sesión' : 'Entrar'}
+          >
+            {isSubmitting ? 'Iniciando sesión...' : 'Entrar'}
+          </button>
+        </Zona>
 
-            <Button type="submit" className="w-full" disabled={isSubmitting || apiStatus.state !== 'online'}>
-              {isSubmitting ? 'Iniciando sesión...' : 'Entrar'}
-            </Button>
-          </form>
-        </div>
-      </div>
-    </main>
+        {/* Mensajes de error / estado de la API */}
+        {mensaje && (
+          <Zona x={1090} y={736} w={420} h={22} className="flex items-center justify-center">
+            <p className={`${estilos.error} text-[0.7em] leading-tight`} role="alert">
+              {mensaje}
+            </p>
+          </Zona>
+        )}
+
+        {/* Recover key (aún sin ruta) */}
+        <Zona x={1355} y={762} w={130} h={24}>
+          <a href="#" onClick={(e) => e.preventDefault()} className={estilos.enlace}>
+            Recuperar clave
+          </a>
+        </Zona>
+      </form>
+    </LoginGrandLine>
   );
 }

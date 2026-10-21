@@ -1,75 +1,121 @@
-import { Activity, ArrowRight, HeartPulse, Package, ShieldCheck, Users } from 'lucide-react';
-import { Navigate } from 'react-router-dom';
+// src/pages/DashboardPage.jsx
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import useDashboardStats from '../hooks/useDashboardStats';
+import DashboardGrandLine, { Zona, estilos } from './DashboardGrandLine';
 
-const stats = [
-  { label: 'Pacientes activos', value: '128', icon: Users },
-  { label: 'Protocolos críticos', value: '14', icon: ShieldCheck },
-  { label: 'Inventario', value: '94%', icon: Package },
-  { label: 'Monitoreo', value: '99.2%', icon: HeartPulse },
-];
+// ⚠️ Ruta de la pantalla de registro de pacientes (la está haciendo otra persona).
+// Cuando exista, cambia solo este valor por la ruta real definida en App.jsx.
+const RUTA_REGISTRO_PACIENTE = '/pacientes/registro';
+
+// Número con brillo neón; `valor` null = todavía sin dato
+function Cifra({ valor, color, brillo }) {
+  const texto = valor ?? '—';
+  const esLargo = String(texto).length > 5; // "ONLINE" / "OFFLINE" necesitan letra más chica
+
+  return (
+    <span
+      className="font-bold leading-none tabular-nums"
+      style={{
+        fontSize: esLargo ? '3.1em' : '4.6em',
+        color,
+        textShadow: `0 0 0.2em ${brillo}, 0 0 0.5em ${brillo}`,
+      }}
+    >
+      {texto}
+    </span>
+  );
+}
+
+const centrado = 'flex items-center justify-center';
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const stats = useDashboardStats({ enabled: Boolean(user) });
 
   if (!user) {
     return <Navigate to="/login" replace />;
   }
 
+  const handleVolverLogin = () => {
+    logout();
+    navigate('/login', { replace: true });
+  };
+
   return (
-    <main className="min-h-screen px-6 py-10">
-      <div className="mx-auto max-w-6xl">
-        <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-sm uppercase tracking-[0.25em] text-primary">Dashboard</p>
-            <h1 className="mt-2 text-3xl font-bold text-white">Bienvenido, {user.name || user.email || 'usuario'}</h1>
-          </div>
-          <div className="flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">
-            <Activity className="h-4 w-4" />
-            Sistema operativo
-          </div>
-        </header>
+    <DashboardGrandLine>
+      {/* "Bienvenido," ya está dibujado: el nombre va justo a continuación */}
+      <Zona x={1462} y={258} w={430} h={90} className="flex items-center">
+        <span
+          className="truncate font-semibold"
+          style={{ fontSize: '3.1em', color: '#e9c7a0' }}
+          title={user.name || user.email}
+        >
+          {user.name || user.email || 'usuario'}
+        </span>
+      </Zona>
 
-        <section className="mb-8 rounded-2xl border border-slate-700 bg-slate-900/70 p-6">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Sesión</p>
-              <h2 className="mt-2 text-2xl font-semibold text-white">Autenticación validada correctamente</h2>
-            </div>
-            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/15 px-3 py-2 text-sm text-emerald-300">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-              En línea
-            </div>
-          </div>
-        </section>
+      {/* Pacientes activos (azul) */}
+      <Zona x={890} y={455} w={350} h={120} className={centrado}>
+        <Cifra valor={stats.activos} color="#8fdcff" brillo="rgba(70,170,255,0.8)" />
+      </Zona>
 
-        <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-          {stats.map(({ label, value, icon: Icon }) => (
-            <article key={label} className="card-surface p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-400">{label}</p>
-                  <h2 className="mt-3 text-3xl font-bold text-white">{value}</h2>
-                </div>
-                <div className="rounded-xl bg-primary/15 p-3 text-primary">
-                  <Icon className="h-6 w-6" />
-                </div>
-              </div>
-            </article>
-          ))}
-        </section>
+      {/* Pacientes críticos (rojo) */}
+      <Zona x={1550} y={455} w={350} h={120} className={centrado}>
+        <Cifra valor={stats.criticos} color="#ff8a7a" brillo="rgba(255,70,50,0.8)" />
+      </Zona>
 
-        <div className="mt-8 flex justify-end">
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-slate-950 transition hover:opacity-90"
-            onClick={() => window.location.href = '/login'}
-          >
-            Volver al login
-            <ArrowRight className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-    </main>
+      {/* Inventario general (ámbar). La tarjeta dibujada lleva encima un botón
+          invisible que abre el pañol, igual que los demás botones del diseño. */}
+      <Zona x={820} y={730} w={440} h={200}>
+        <button
+          type="button"
+          onClick={() => navigate('/inventario')}
+          aria-label="Abrir el pañol de la enfermería"
+          className="h-full w-full rounded-xl bg-transparent text-transparent transition hover:bg-amber-300/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#ffd36a]"
+        >
+          Ver inventario
+        </button>
+      </Zona>
+      <Zona x={890} y={755} w={350} h={120} className={`${centrado} pointer-events-none`}>
+        <Cifra
+          valor={stats.inventario != null ? `${stats.inventario}%` : null}
+          color="#ffd978"
+          brillo="rgba(255,170,40,0.8)"
+        />
+      </Zona>
+
+      {/* Sistema up-time (verde): entre la brújula y el pulso dibujado */}
+      <Zona x={1530} y={755} w={290} h={120} className={centrado}>
+        <Cifra valor={stats.uptime} color="#7dffa0" brillo="rgba(60,230,110,0.8)" />
+      </Zona>
+
+      {/* Aviso si el backend no responde */}
+      {stats.error && (
+        <Zona x={680} y={982} w={1240} h={30} className={centrado}>
+          <p className="text-[1.05em] font-semibold text-red-300" role="status">
+            {stats.error}
+          </p>
+        </Zona>
+      )}
+
+      {/* Botones invisibles sobre los dibujados */}
+      <Zona x={1010} y={1060} w={580} h={120}>
+        <button type="button" className={estilos.boton} onClick={handleVolverLogin}>
+          Volver al login
+        </button>
+      </Zona>
+
+      <Zona x={990} y={1205} w={620} h={135}>
+        <button
+          type="button"
+          className={estilos.boton}
+          onClick={() => navigate(RUTA_REGISTRO_PACIENTE)}
+        >
+          Registrar paciente
+        </button>
+      </Zona>
+    </DashboardGrandLine>
   );
 }
