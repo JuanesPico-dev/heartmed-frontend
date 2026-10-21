@@ -66,8 +66,19 @@ export default function DashboardPage() {
         <Cifra valor={stats.criticos} color="#ff8a7a" brillo="rgba(255,70,50,0.8)" />
       </Zona>
 
-      {/* Inventario general (ámbar) */}
-      <Zona x={890} y={755} w={350} h={120} className={centrado}>
+      {/* Inventario general (ámbar). La tarjeta dibujada lleva encima un botón
+          invisible que abre el pañol, igual que los demás botones del diseño. */}
+      <Zona x={820} y={730} w={440} h={200}>
+        <button
+          type="button"
+          onClick={() => navigate('/inventario')}
+          aria-label="Abrir el pañol de la enfermería"
+          className="h-full w-full rounded-xl bg-transparent text-transparent transition hover:bg-amber-300/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#ffd36a]"
+        >
+          Ver inventario
+        </button>
+      </Zona>
+      <Zona x={890} y={755} w={350} h={120} className={`${centrado} pointer-events-none`}>
         <Cifra
           valor={stats.inventario != null ? `${stats.inventario}%` : null}
           color="#ffd978"

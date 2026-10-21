@@ -5,6 +5,7 @@ const HEARTMED_API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:
 export const ENDPOINTS = {
   pacientes: '/api/pacientes',
   inventario: '/api/inventario',
+  movimientos: '/api/movimientos',
 };
 
 function buildApiUrl(path) {
@@ -91,6 +92,24 @@ export async function createPatient(datos) {
 export async function updatePatient(idPaciente, datos) {
   return requestJson(buildApiUrl(`${ENDPOINTS.pacientes}/${idPaciente}`), {
     method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify(datos),
+  });
+}
+
+// ---- Movimientos de inventario ----
+
+export async function getMovements(limite = 25) {
+  return requestJson(buildApiUrl(`${ENDPOINTS.movimientos}?limite=${limite}`), {
+    headers: authHeaders(),
+  });
+}
+
+// `datos`: id_lote, tipo_movimiento (ENTRADA | CONSUMO | BAJA), cantidad y
+// motivo. Quién registra el movimiento lo deduce el backend del token.
+export async function createMovement(datos) {
+  return requestJson(buildApiUrl(ENDPOINTS.movimientos), {
+    method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify(datos),
   });
